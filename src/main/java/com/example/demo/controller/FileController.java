@@ -29,7 +29,7 @@ import java.util.zip.ZipFile;
 @RestController
 @Slf4j
 public class FileController {
-    
+
     @Resource
     private DownloadRecordsService downloadRecordsService;
     @Resource
@@ -63,8 +63,8 @@ public class FileController {
      */
     @PostMapping("/template/update")
     public JSONResult updateTemplate(
-    @RequestParam("file") MultipartFile file, 
-    @RequestParam("templateId") Integer templateId){
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("templateId") Integer templateId){
         String fileName = file.getOriginalFilename();
         AchievementCheckTemplate achievementCheckTemplate = new AchievementCheckTemplate();
         achievementCheckTemplate.setTemplateStoragepath(fileName);
@@ -84,8 +84,8 @@ public class FileController {
      */
     @PostMapping("/template/downloadPage")
     public JSONResult templatedownloadPage(
-    @RequestParam("templateId") Integer templateId, 
-    @RequestParam("userId") Integer userId){
+            @RequestParam("templateId") Integer templateId,
+            @RequestParam("userId") Integer userId){
         JSONResult jsonResult = new JSONResult();
         DownloadRecords downloadRecords = new DownloadRecords();
         AchievementCheckTemplate res = this.achievementCheckTemplateService.queryById(templateId);
@@ -118,8 +118,8 @@ public class FileController {
      * 输出：下载成功直接返回文件
      */
     @PostMapping("/template/download")
-    public void downloadTemplate(HttpServletResponse response, 
-    @RequestParam("fileName") String fileName){
+    public void downloadTemplate(HttpServletResponse response,
+                                 @RequestParam("fileName") String fileName){
         try {
             FileTools.downloadfile(response, templatePath, fileName);
         } catch (IOException e) {
@@ -133,8 +133,8 @@ public class FileController {
      */
     @PostMapping("/achievement/uploadtoAudit")
     public JSONResult uploadtoAudit(
-    @RequestParam("file") List<MultipartFile> files, 
-    @RequestPart(value = "achievementTable") AchievementTable achievementTable
+            @RequestParam("file") List<MultipartFile> files,
+            @RequestPart(value = "achievementTable") AchievementTable achievementTable
     ){
         JSONResult jsonResult = new JSONResult();
         int statusCode = HttpStatus.OK.value();
@@ -153,12 +153,12 @@ public class FileController {
         }
         String achievementName = achievementTable.getAchievementName();
         String filePath = auditPath+achievementName+"/";
-        
+
         MultipartFile file = null;
 
         for (int i = 0; i < files.size(); ++i) {
             file = files.get(i);
-            jsonResult = FileTools.upload(file, filePath, i+1); 
+            jsonResult = FileTools.upload(file, filePath, i+1);
             if(jsonResult.getType() == "fail"){
                 return jsonResult;
             }
@@ -186,14 +186,78 @@ public class FileController {
             return jsonResult;
         }
     }
+
+    /*
+     * 更新文件上传至待审核区
+     * 输入：文件（可多文件）、成果ID、新版本号
+     * 输出：jsonResult
+     */
+    @PostMapping("/achievement/upgradetoAudit")
+    public JSONResult upgradetoAudit(
+            @RequestParam("file") List<MultipartFile> files,
+            @RequestPart(value = "achievementId") Integer achievementId,
+            @RequestPart(value = "newVersion") String newVersion
+    ){
+        JSONResult jsonResult = new JSONResult();
+        int statusCode = HttpStatus.OK.value();
+        AchievementTable achievementTable = this.achievementTableService.queryById(achievementId);
+        achievementTable.setAuditFlag(2);
+        achievementTable.setAchievementVersion(newVersion);
+        jsonResult.setResultCode(statusCode);
+        LocalDateTime now = LocalDateTime.now();
+        DateTimeFormatter formatter1 = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        DateTimeFormatter formatter2 = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
+        achievementTable.setUploadTime(now.format(formatter1));
+        Integer res = this.achievementTableService.update(achievementTable);
+        if (res == 0) {
+            jsonResult.setType("fail");
+            jsonResult.setResultMsg("上传失败");
+            jsonResult.setData("数据库写入失败");
+            return jsonResult;
+        }
+        String achievementName = achievementTable.getAchievementName();
+        String filePath = auditPath+achievementName+"/";
+
+        MultipartFile file = null;
+
+        for (int i = 0; i < files.size(); ++i) {
+            file = files.get(i);
+            jsonResult = FileTools.upload(file, filePath, i+1);
+            if(jsonResult.getType() == "fail"){
+                return jsonResult;
+            }
+        }
+        String zipFilePath = auditPath+achievementName+now.format(formatter2)+".zip";
+        ApprovalRecords approvalRecords = new ApprovalRecords();
+
+        approvalRecords.setAchievementId(achievementTable.getAchievementId());
+        approvalRecords.setApprovalStatus(3);
+        approvalRecords.setApprovalType(achievementName+now.format(formatter2)+".zip");
+        approvalRecords.setUserId(achievementTable.getUserId());
+        approvalRecords.setTableStatus(true);
+        File inputFile = new File(filePath);
+        File outputFile = new File(zipFilePath);
+        statusCode = HttpStatus.OK.value();
+        try {
+            FileZip.zipCompress(inputFile, outputFile);
+            FileTools.forceDelete(inputFile);
+            this.approvalRecordsService.insert(approvalRecords);
+            jsonResult = new JSONResult("success", statusCode, "上传成功，等待审核", achievementName+now.format(formatter2));
+            return jsonResult;
+        } catch (IOException e) {
+            jsonResult = new JSONResult("fail", statusCode, "上传失败", e.getMessage());
+            e.printStackTrace();
+            return jsonResult;
+        }
+    }
     /*
      * 待审核文件下载
      * 输入：文件名
      * 输出：成功直接返回文件
      */
     @PostMapping("/achievement/downloadtoAudit")
-    public void downloadtoAudit(HttpServletResponse response, 
-    @RequestParam("fileName") String fileName){
+    public void downloadtoAudit(HttpServletResponse response,
+                                @RequestParam("fileName") String fileName){
         log.info("downloadtoAudit");
         log.info("fileName:"+fileName);
         try {
@@ -243,14 +307,14 @@ public class FileController {
      * 审核完成文件归档
      * 输入：
      * 成果名、用户id、
-     * 操作id（0新增成果归档、1为已有成果添加成果文件、2为修改成果文件***修改成果文件一次只能修改一个文件***、3为未通过审核文件删除）
+     * 操作id（0新增成果归档、1更新文件审核、3为未通过审核文件删除）
      * 审核完成文件名、新成果版本号（添加和修改文件时需要）、修改文件名（修改文件时需要）、更新内容（修改文件时需要）
      * 输出：jsonResult
      */
     @PostMapping("/achievement/AuditComplete")
-    public JSONResult AuditComplete( 
-    @RequestParam("operationId") Integer operationId,
-    @RequestParam("approvalId") Integer approvalId 
+    public JSONResult AuditComplete(
+            @RequestParam("operationId") Integer operationId,
+            @RequestParam("approvalId") Integer approvalId
     ){
         log.info("auditComplete");
         JSONResult jsonResult = new JSONResult();
@@ -268,32 +332,31 @@ public class FileController {
         approvalRecord.setApprovalStatus(1);
 
         AchievementTable achievement = this.achievementTableService.queryById(achievementId);
-        Integer userId = achievement.getUserId();
-        String achievementVersion = achievement.getAchievementVersion();
+        File startFile=new File(zipFilePath);
         Integer ProjectId = achievement.getProjectId();
         String achievementName = achievement.getAchievementName();
 
-        File startFile=new File(zipFilePath);
-        File endDirection=new File(achievementPath);
-        log.info("startFile:"+startFile.getPath());
-        log.info("endDirection:"+endDirection.getPath());
-        if(!endDirection.exists()) {
-            endDirection.mkdirs();
-         }
-
-        FileRecord fileRecord = new FileRecord();
-        fileRecord.setAchievementId(achievementId);
-        fileRecord.setProjectId(ProjectId);
-        fileRecord.setUserId(userId);
-        fileRecord.setUploadTime(now.format(formatter2));
-
-        VersionHistory versionHistory = new VersionHistory();
-        versionHistory.setAchievementId(achievementId);
-        versionHistory.setUserId(userId);
-        versionHistory.setUpdateTime(now.format(formatter2));
-        versionHistory.setVersionNumber(achievementVersion);
-        
         if(operationId == 0){
+            Integer userId = achievement.getUserId();
+            String achievementVersion = achievement.getAchievementVersion();
+            File endDirection=new File(achievementPath);
+            log.info("startFile:"+startFile.getPath());
+            log.info("endDirection:"+endDirection.getPath());
+            if(!endDirection.exists()) {
+                endDirection.mkdirs();
+            }
+
+            FileRecord fileRecord = new FileRecord();
+            fileRecord.setAchievementId(achievementId);
+            fileRecord.setProjectId(ProjectId);
+            fileRecord.setUserId(userId);
+            fileRecord.setUploadTime(now.format(formatter2));
+
+            VersionHistory versionHistory = new VersionHistory();
+            versionHistory.setAchievementId(achievementId);
+            versionHistory.setUserId(userId);
+            versionHistory.setUpdateTime(now.format(formatter2));
+            versionHistory.setVersionNumber(achievementVersion);
             log.info("operationId == 0");
 
             achievement.setAuditFlag(1);
@@ -307,124 +370,58 @@ public class FileController {
             if(!endFile.exists()) {
                 jsonResult = new JSONResult("fail", statusCode, "操作失败", "文件归档失败");
                 return jsonResult;
-             }
+            }
             Integer res_vh = this.versionHistoryService.insert(versionHistory);
             Integer res_fr = this.fileRecordService.insert(fileRecord);
             Integer res_ar = this.approvalRecordsService.update(approvalRecord);
             Integer res_at = this.achievementTableService.update(achievement);
             jsonResult = new JSONResult("success", statusCode, "操作成功", "成果上传成功");
-            // if(res_fr == 1 && res_vh == 1 && res_ar == 1 && res_at == 1){
-            //     jsonResult = new JSONResult("success", statusCode, "操作成功", "成果上传成功");
-            // }else{
-            //     jsonResult = new JSONResult("fail", statusCode, "操作失败", "文件映射表写入失败");
-            // }
             return jsonResult;
 
         }else if(operationId == 1){
-            // String addfilename = AuditFileName+".zip";
-            // File addFile=new File(endDirection+File.separator+addfilename);
-            // startFile.renameTo(addFile);
-            // approvalRecord.setApprovalStatus(1);
-            // this.approvalRecordsService.update(approvalRecord);
-            // String endfiledir = endDirection+File.separator+achievementName+newVersion;
-            // String orifilename = endDirection+File.separator+achievementName+achievementVersion+".zip";
-            // File oriFile = new File(orifilename);
-            // File outputDir = new File(endfiledir);
-            // String outputFilename = endDirection+File.separator+achievementName+newVersion+".zip";
-            // File outputFile = new File(outputFilename);
-            // versionHistory.setVersionNumber(newVersion);
-            // versionHistory.setUpdateContent(updateContent);
-            // if(!outputDir.exists()) {
-            //     outputDir.mkdirs();
-            //  }
-            // try {
-            //     FileZip.zipDecompress(addFile, outputDir);
-            //     FileZip.zipDecompress(oriFile, outputDir);
-            //     FileZip.zipCompress(outputDir, outputFile);
-            //     FileTools.forceDelete(outputDir);
-            //     FileTools.forceDelete(addFile);
-            //     achievement.setAchievementVersion(newVersion);
-            //     if(!outputFile.exists()) {
-            //         jsonResult = new JSONResult("fail", statusCode, "操作失败", "文件归档失败");
-            //         return jsonResult;
-            //      }
-            //     Integer resachievement = this.achievementTableService.update(achievement);
-            //     fileRecord.setFileName(achievementName+newVersion+".zip");
-            //     Integer res_vh = this.versionHistoryService.insert(versionHistory);
-            //     Integer resfileRecord = this.fileRecordService.insert(fileRecord);
-            //     if(resfileRecord!=1 || res_vh != 1 || resachievement != 1){
-            //         jsonResult = new JSONResult("fail", statusCode, "操作失败", "文件映射表写入失败");
-            //         return jsonResult;
-            //     }
-            // } catch (Exception e) {
-            //     e.printStackTrace();
-            //     jsonResult = new JSONResult("fail", statusCode, "操作失败", e.getMessage());
-            //     return jsonResult;
-            // }
-            // jsonResult = new JSONResult("success", statusCode, "操作成功", "成果文件添加成功");
             return jsonResult;
         }else if(operationId == 2){
-            // approvalRecord.setApprovalStatus(1);
-            // this.approvalRecordsService.update(approvalRecord);
-            // String revisefilename = AuditFileName+".zip";
-            // File reviseFile=new File(endDirection+File.separator+revisefilename);
-            // startFile.renameTo(reviseFile);
-            // String endfiledir = endDirection+File.separator+achievementName+newVersion;
-            // File outputDir = new File(endfiledir);
-            // String orifilename = endDirection+File.separator+achievementName+achievementVersion+".zip";
-            // File oriFile = new File(orifilename);
-            // String revisefileurl = endfiledir+File.separator+reviseFileName;
-            // File revisefile = new File(revisefileurl);
-            // String outputFilename = endDirection+File.separator+achievementName+newVersion+".zip";
-            // File outputFile = new File(outputFilename);
-            // versionHistory.setVersionNumber(newVersion);
-            // versionHistory.setUpdateContent(updateContent);
-            // if(!outputDir.exists()) {
-            //     outputDir.mkdirs();
-            //  }
-            // try {
-            //     FileZip.zipDecompress(oriFile, outputDir);
-            //     FileTools.forceDelete(revisefile);
-            //     FileZip.zipDecompress(reviseFile, outputDir);
-            //     FileZip.zipCompress(outputDir, outputFile);
-            //     FileTools.forceDelete(outputDir);
-            //     FileTools.forceDelete(reviseFile);
-            //     achievement.setAchievementVersion(newVersion);
-            //     if(!outputFile.exists()) {
-            //         jsonResult = new JSONResult("fail", statusCode, "操作失败", "文件归档失败");
-            //         return jsonResult;
-            //      }
-            //     Integer resachievement = this.achievementTableService.update(achievement);
-            //     Integer res_vh = this.versionHistoryService.insert(versionHistory);
-            //     fileRecord.setFileName(achievementName+newVersion+".zip");
-            //     Integer resfileRecord = this.fileRecordService.insert(fileRecord);
-            //     if(resfileRecord!=1 || res_vh != 1|| resachievement != 1){
-            //         jsonResult = new JSONResult("fail", statusCode, "操作失败", "文件映射表写入失败");
-            //         return jsonResult;
-            //     }
-            // } catch (Exception e) {
-            //     e.printStackTrace();
-            //     jsonResult = new JSONResult("fail", statusCode, "操作失败", e.getMessage());
-            //     return jsonResult;
-            // }
-            // jsonResult = new JSONResult("success", statusCode, "操作成功", "成果文件修改成功");
             return jsonResult;
         }else if(operationId ==3){
-            log.info("operationId == 3");
-            this.achievementTableService.deleteById(achievementId);
-            log.info("achievementId ", achievementId);
-            approvalRecord.setApprovalStatus(2);
-            log.info("approvalRecord finished");
-            this.approvalRecordsService.update(approvalRecord);
-            try {
-                FileTools.forceDelete(startFile);
-                jsonResult = new JSONResult("success", statusCode, "操作成功", "未通过审核文件已删除");
-            } catch (IOException e) {
-                jsonResult = new JSONResult("fail", statusCode, "操作失败", e.getMessage());
-                e.printStackTrace();
+            if(achievement.getAuditFlag() == 0){
+                this.achievementTableService.deleteById(achievementId);
+                approvalRecord.setApprovalStatus(2);
+                log.info("approvalRecord finished");
+                this.approvalRecordsService.update(approvalRecord);
+                try {
+                    FileTools.forceDelete(startFile);
+                    jsonResult = new JSONResult("success", statusCode, "操作成功", "未通过审核文件已删除");
+                } catch (IOException e) {
+                    jsonResult = new JSONResult("fail", statusCode, "操作失败", e.getMessage());
+                    e.printStackTrace();
+                    return jsonResult;
+                }
+                return jsonResult;
+            }else if(achievement.getAuditFlag() == 2){
+                achievement.setAuditFlag(1);
+                VersionHistory versionHistory = new VersionHistory();
+                versionHistory.setAchievementId(achievementId);
+                List<VersionHistory> veList = this.versionHistoryService.querylimitWithPagination(versionHistory, 1, 10000);
+                achievement.setAchievementVersion(veList.get(veList.size()-1).getVersionNumber());
+                achievement.setUploadTime(veList.get(veList.size()-1).getUpdateTime());
+                this.achievementTableService.update(achievement);
+                approvalRecord.setApprovalStatus(2);
+                log.info("approvalRecord finished");
+                this.approvalRecordsService.update(approvalRecord);
+                try {
+                    FileTools.forceDelete(startFile);
+                    jsonResult = new JSONResult("success", statusCode, "操作成功", "未通过审核文件已删除");
+                } catch (IOException e) {
+                    jsonResult = new JSONResult("fail", statusCode, "操作失败", e.getMessage());
+                    e.printStackTrace();
+                    return jsonResult;
+                }
+                return jsonResult;
+            }else{
+                jsonResult = new JSONResult("fail", statusCode, "操作失败", "operationId无效");
                 return jsonResult;
             }
-            return jsonResult;
+
         }else{
             jsonResult = new JSONResult("fail", statusCode, "操作失败", "operationId无效");
             return jsonResult;
@@ -437,10 +434,10 @@ public class FileController {
      */
     @PostMapping("/achievement/downloadPage")
     public JSONResult achievementdownloadPage(
-    @RequestParam(value = "achievementIds", required = false) List<Integer> achievementIds, 
-    @RequestParam("userId") Integer userId){
+            @RequestParam(value = "achievementIds", required = false) List<Integer> achievementIds,
+            @RequestParam("userId") Integer userId){
         log.info("downloadPage start");
-        JSONResult jsonResult = new JSONResult();  
+        JSONResult jsonResult = new JSONResult();
         int statusCode;
         LocalDateTime now = LocalDateTime.now();
         DateTimeFormatter formatter2 = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -448,7 +445,7 @@ public class FileController {
 
         String fileName;
         for(Integer achievementId : achievementIds){
-            
+
             AchievementTable res = this.achievementTableService.queryById(achievementId);
 
             if (res == null) {
@@ -517,8 +514,8 @@ public class FileController {
      * 输出：调用成功直接返回文件
      */
     @PostMapping("/achievement/download")
-    public void downloadachievement(HttpServletResponse response, 
-    @RequestParam("fileNames") List<String> fileNames) throws IOException {
+    public void downloadachievement(HttpServletResponse response,
+                                    @RequestParam("fileNames") List<String> fileNames) throws IOException {
         log.info("downloadachievement");
         System.out.println(fileNames);
         log.info("fileNames "+fileNames);
@@ -553,7 +550,7 @@ public class FileController {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-            
+
         }
     }
 }
